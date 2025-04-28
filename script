@@ -1,0 +1,78 @@
+(async function scrapeBookmarks() {
+  const baseURL = window.location.origin + window.location.pathname;
+  const results = [];
+  let pageNum = 1;
+
+  while (true) {
+    console.log(`Fetching page ${pageNum}…`);
+    const resp = await fetch(`${baseURL}?page=${pageNum}`, { credentials: 'same-origin' });
+    if (!resp.ok) break;
+    const html = await resp.text();
+    const doc  = new DOMParser().parseFromString(html, 'text/html');
+
+    // 1) scrape bookmarks as before
+    doc.querySelectorAll('.user-bookmark-item').forEach(item => {
+      const title    = item.querySelector('.bm-title')?.textContent.trim()   || '';
+      const linkText = item.querySelectorAll('a')[4]?.textContent.trim()    || '';
+      results.push({ title, linkText });
+    });
+
+    // 2) scrape the “Current : <a>Chapter …” element
+    const currA = doc.querySelector('span > a[rel="nofollow"]');
+    if (currA) {
+      const currentChapter = currA.textContent.trim();
+      const currentHref    = currA.href;
+      // attach it either to the last bookmark, or push as its own record:
+      // here we add it as its own record:
+      results.push({ 
+        title: 'Current Chapter', 
+        linkText: currentChapter,
+        url:     currentHref 
+      });
+    }
+
+    // pagination check
+    if (!doc.querySelector('.pagination .next:not(.disabled)')) break;
+    pageNum++;
+  }
+
+  // --- CSV export ---
+  const keys = Array.from(new Set(results.flatMap(Object.keys)));
+  const csvLines = [ keys.join(',') ];
+  results.forEach(obj => {
+    csvLines.push(
+      keys.map(k => `"${(obj[k]||'').replace(/"/g,'""')}"`).join(',')
+    );
+  });
+  const csvBlob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
+  const csvURL  = URL.createObjectURL(csvBlob);
+  const aCSV    = document.createElement('a');
+  aCSV.href     = csvURL;
+  aCSV.download = 'bookmarks.csv';
+  aCSV.textContent = 'Download bookmarks.csv';
+  document.body.appendChild(aCSV);
+
+  // --- XML export ---
+  let xml = `<?xml version="1.0" encoding="UTF-8"?><records>`;
+  results.forEach(obj => {
+    xml += `<record>`;
+    keys.forEach(k => {
+      const v = obj[k] || '';
+      xml += `<${k}>${v
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')}</${k}>`;
+    });
+    xml += `</record>`;
+  });
+  xml += `</records>`;
+  const xmlBlob = new Blob([xml], { type: 'application/xml' });
+  const xmlURL  = URL.createObjectURL(xmlBlob);
+  const aXML    = document.createElement('a');
+  aXML.href     = xmlURL;
+  aXML.download = 'bookmarks.xml';
+  aXML.textContent = 'Download bookmarks.xml';
+  document.body.appendChild(aXML);
+
+  console.log(`Done: scraped ${results.length} entries.`);
+})();
